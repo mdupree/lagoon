@@ -686,7 +686,7 @@ else
 		IMAGE_REPO=$(CI_BUILD_TAG) \
 		docker-compose -p $(CI_BUILD_TAG) --compatibility up -d
 endif
-	grep -m 1 ".opendistro_security index does not exist yet" <(docker-compose -p $(CI_BUILD_TAG) logs -f logs-db 2>&1)
+	grep -m 1 "Not yet initialized (you may need to run securityadmin)" <(docker-compose -p $(CI_BUILD_TAG) logs -f logs-db 2>&1)
 	while ! docker exec "$$(docker-compose -p $(CI_BUILD_TAG) ps -q logs-db)" ./securityadmin_demo.sh; do sleep 5; done
 	$(MAKE) wait-for-keycloak
 

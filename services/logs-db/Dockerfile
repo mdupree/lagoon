@@ -2,8 +2,8 @@ ARG UPSTREAM_REPO
 ARG UPSTREAM_TAG
 FROM ${UPSTREAM_REPO:-uselagoon}/elasticsearch-7:${UPSTREAM_TAG:-latest}
 
-RUN bin/elasticsearch-plugin install -b https://d3g5vo6xdbdb9a.cloudfront.net/downloads/elasticsearch-plugins/opendistro-security/opendistro_security-1.6.0.0.zip \
-    && bin/elasticsearch-plugin install https://d3g5vo6xdbdb9a.cloudfront.net/downloads/elasticsearch-plugins/opendistro-sql/opendistro_sql-1.6.0.0.zip \
+RUN bin/elasticsearch-plugin install -b https://d3g5vo6xdbdb9a.cloudfront.net/downloads/elasticsearch-plugins/opendistro-security/opendistro_security-1.11.0.0.zip \
+    && bin/elasticsearch-plugin install -b https://d3g5vo6xdbdb9a.cloudfront.net/downloads/elasticsearch-plugins/opendistro-sql/opendistro_sql-1.11.0.0.zip \
     && bin/elasticsearch-plugin install -b repository-s3 \
     && bin/elasticsearch-plugin install -b repository-azure \
     && chmod a+x /usr/share/elasticsearch/plugins/opendistro_security/tools/install_demo_configuration.sh \
