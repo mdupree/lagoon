@@ -1,14 +1,10 @@
 node {
-
-  openshift_version = 'v3.11.0'
-  minishift_version = '1.34.1'
   kubernetes_versions = [
-    // ["kubernetes": "v1.15", "k3s": "v0.9.1", "kubectl": "v1.15.4"],
-    // ["kubernetes": "v1.16", "k3s": "v1.0.1", "kubectl": "v1.16.3"],
-    ["kubernetes": "v1.17", "k3s": "v1.17.0-k3s.1", "kubectl": "v1.17.0"]
+    // https://github.com/kubernetes-sigs/kind/releases
+    "kindest/node:v1.19.1@sha256:98cf5288864662e37115e362b23e4369c8c4a408f99cbc06e58ac30ddc721600",
+    "kindest/node:v1.18.8@sha256:f4bcc97a0ad6e7abaf3f643d890add7efe6ee4ab90baeb374b4f41a4c95567eb",
+    "kindest/node:v1.17.11@sha256:5240a7a2c34bf241afb54ac05669f8a46661912eab05705d660971eeb12f6555",
   ]
-
-  env.MINISHIFT_HOME = "/data/jenkins/.minishift"
 
   withEnv(['AWS_BUCKET=jobs.amazeeio.services', 'AWS_DEFAULT_REGION=us-east-2']) {
     withCredentials([
@@ -26,7 +22,7 @@ node {
         // See `man -P 'less +/-O' make` for more information about this option.
         //
         // Uncomment the line below to disable output synchronisation.
-        env.SYNC_MAKE_OUTPUT = 'none'
+        // env.SYNC_MAKE_OUTPUT = 'none'
 
         stage ('env') {
           sh "env"
@@ -60,88 +56,57 @@ node {
           sh script: "make -O${SYNC_MAKE_OUTPUT} -j8 build", label: "Building images"
         }
 
-        try {
-          parallel (
-            '1 tests': {
-              kubernetes_versions.each { kubernetes_version ->
-                stage ("kubernetes ${kubernetes_version['kubernetes']} tests") {
-                  try {
-                    sh script: "make k3d/clean K3S_VERSION=${kubernetes_version['k3s']} KUBECTL_VERSION=${kubernetes_version['kubectl']}", label: "Removing any previous k3d versions"
-                    sh script: "make k3d K3S_VERSION=${kubernetes_version['k3s']} KUBECTL_VERSION=${kubernetes_version['kubectl']}", label: "Making k3d"
-                    sh script: "make -O${SYNC_MAKE_OUTPUT} k8s-tests -j2", label: "Making kubernetes tests"
-                  } catch (e) {
-                    echo "Something went wrong, trying to cleanup"
-                    cleanup()
-                    throw e
-                  }
+        stage ('push images to testlagoon/*') {
+          withCredentials([string(credentialsId: 'amazeeiojenkins-dockerhub-password', variable: 'PASSWORD')]) {
+            try {
+              if (env.SKIP_IMAGE_PUBLISH != 'true') {
+                sh script: 'docker login -u amazeeiojenkins -p $PASSWORD', label: "Docker login"
+                sh script: "make -O${SYNC_MAKE_OUTPUT} -j8 publish-testlagoon-baseimages publish-testlagoon-serviceimages publish-testlagoon-taskimages BRANCH_NAME=${SAFEBRANCH_NAME}", label: "Publishing built images"
+              } else {
+                sh script: 'echo "skipped because of SKIP_IMAGE_PUBLISH env variable"', label: "Skipping image publishing"
+              }
+              if (env.BRANCH_NAME == 'main' ) {
+                sh script: 'docker login -u amazeeiojenkins -p $PASSWORD', label: "Docker login"
+                sh script: "make -O${SYNC_MAKE_OUTPUT} -j8 publish-testlagoon-baseimages publish-testlagoon-serviceimages publish-testlagoon-taskimages BRANCH_NAME=latest", label: "Publishing built images with :latest tag"
+                withCredentials([string(credentialsId: 'vshn-gitlab-helmfile-ci-trigger', variable: 'TOKEN')]) {
+                  sh script: "curl -X POST -F token=$TOKEN -F ref=master https://git.vshn.net/api/v4/projects/1263/trigger/pipeline", label: "Trigger lagoon-core helmfile sync on amazeeio-test6"
                 }
               }
-              stage ('minishift tests') {
-                withCredentials([string(credentialsId: 'github_api_public_read', variable: 'MINISHIFT_GITHUB_API_TOKEN')]) {
-                  try {
-                    if (env.CHANGE_ID && pullRequest.labels.contains("skip-openshift-tests")) {
-                      sh script: 'echo "PR identified as not needing Openshift testing."', label: "Skipping Openshift testing stage"
-                    } else {
-                      sh 'make minishift/cleanall || echo'
-                      sh script: "make minishift MINISHIFT_GITHUB_API_TOKEN=$MINISHIFT_GITHUB_API_TOKEN MINISHIFT_CPUS=\$(nproc --ignore 3) MINISHIFT_MEMORY=24GB MINISHIFT_DISK_SIZE=70GB MINISHIFT_VERSION=${minishift_version} OPENSHIFT_VERSION=${openshift_version}", label: "Making openshift"
-                      sh script: "make -O${SYNC_MAKE_OUTPUT} push-minishift -j5", label: "Pushing built images into openshift"
-                      sh script: "make -O${SYNC_MAKE_OUTPUT} openshift-tests -j1", label: "Making openshift tests"
-                    }
-                  } catch (e) {
-                    echo "Something went wrong, trying to cleanup"
-                    cleanup()
-                    throw e
-                  }
-                }
-              }
-              stage ('cleanup') {
-                cleanup()
-              }
-            },
-            '2 start services': {
-              stage ('start services') {
-                try {
-                  notifySlack()
-                  sh "make kill"
-                  sh "make up"
-                  sh "make logs"
-                } catch (e) {
-                  echo "Something went wrong, trying to cleanup"
-                  cleanup()
-                  throw e
-                }
-              }
-            },
-            '3 push images to testlagoon': {
-              stage ('push images to testlagoon/*') {
-                withCredentials([string(credentialsId: 'amazeeiojenkins-dockerhub-password', variable: 'PASSWORD')]) {
-                  try {
-                    if (env.SKIP_IMAGE_PUBLISH != 'true') {
-                      sh script: 'docker login -u amazeeiojenkins -p $PASSWORD', label: "Docker login"
-                      sh script: "make -O${SYNC_MAKE_OUTPUT} -j8 publish-testlagoon-baseimages publish-testlagoon-serviceimages publish-testlagoon-taskimages BRANCH_NAME=${SAFEBRANCH_NAME}", label: "Publishing built images"
-                    } else {
-                      sh script: 'echo "skipped because of SKIP_IMAGE_PUBLISH env variable"', label: "Skipping image publishing"
-                    }
-                    if (env.BRANCH_NAME == 'main' ) {
-                      sh script: 'docker login -u amazeeiojenkins -p $PASSWORD', label: "Docker login"
-                      sh script: "make -O${SYNC_MAKE_OUTPUT} -j8 publish-testlagoon-baseimages publish-testlagoon-serviceimages publish-testlagoon-taskimages BRANCH_NAME=latest", label: "Publishing built images with :latest tag"
-                      withCredentials([string(credentialsId: 'vshn-gitlab-helmfile-ci-trigger', variable: 'TOKEN')]) {
-                        sh script: "curl -X POST -F token=$TOKEN -F ref=master https://git.vshn.net/api/v4/projects/1263/trigger/pipeline", label: "Trigger lagoon-core helmfile sync on amazeeio-test6"
-                      }
-                    }
-                  } catch (e) {
-                    echo "Something went wrong, trying to cleanup"
-                    cleanup()
-                    throw e
-                  }
-                }
-              }
+            } catch (e) {
+              echo "Something went wrong, trying to cleanup"
+              cleanup()
+              throw e
             }
-          )
-        } catch (e) {
-          echo "Something went wrong, trying to cleanup"
-          cleanup()
-          throw e
+          }
+        }
+
+        def kubernetes = [:]
+        def success = true
+        def lastException = null
+        kubernetes_versions.each { v ->
+          def version = v
+          kubernetes[version] = {
+            try {
+              echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests started"
+              // sh script: "make -j8 kind/test K8S_VERSION=${version}", label: "Running tests on kind ${version.replaceFirst(/@.*$/,"")} cluster"
+              sh script: "echo make -j8 kind/test K8S_VERSION=${version} && sleep 30", label: "Running tests on kind ${version.replaceFirst(/@.*$/,"")} cluster"
+              echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests succeeded"
+            } catch (e) {
+              success = false
+              echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests failed"
+            }
+          }
+        }
+
+        stage ("kubernetes ${version} tests") {
+          parallel kubernetes
+        }
+
+        if success {
+          currentBuild.result = 'SUCCESS'
+        } else {
+          currentBuild.result = 'FAILURE'
+          throw lastException
         }
 
         if (env.TAG_NAME && env.SKIP_IMAGE_PUBLISH != 'true') {
@@ -163,7 +128,7 @@ node {
         currentBuild.result = 'FAILURE'
         throw e
       } finally {
-        notifySlack(currentBuild.result)
+        // notifySlack(currentBuild.result)
       }
     }
   }
@@ -172,11 +137,7 @@ node {
 
 def cleanup() {
   try {
-    sh "make minishift/cleanall"
-    sh "make k3d/cleanall"
-    sh "make down || true"
-    sh "make kill"
-    sh "make down"
+    sh "echo make kind/cleanall"
     sh "make clean"
   } catch (error) {
     echo "cleanup failed, ignoring this."
