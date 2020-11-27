@@ -6,6 +6,24 @@ node {
     "kindest/node:v1.17.11@sha256:5240a7a2c34bf241afb54ac05669f8a46661912eab05705d660971eeb12f6555",
   ]
 
+  def kubernetes = [:]
+  def success = true
+  def lastException = null
+  kubernetes_versions.each { v ->
+    def version = v
+    kubernetes[version] = {
+      try {
+        echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests started"
+        // sh script: "make -j8 kind/test K8S_VERSION=${version}", label: "Running tests on kind ${version.replaceFirst(/@.*$/,"")} cluster"
+        sh script: "echo make -j8 kind/test K8S_VERSION=${version} && sleep 30", label: "Running tests on kind ${version.replaceFirst(/@.*$/,"")} cluster"
+        echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests succeeded"
+      } catch (e) {
+        success = false
+        echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests failed"
+      }
+    }
+  }
+
   withEnv(['AWS_BUCKET=jobs.amazeeio.services', 'AWS_DEFAULT_REGION=us-east-2']) {
     withCredentials([
       usernamePassword(credentialsId: 'aws-s3-lagoon', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
@@ -80,25 +98,7 @@ node {
           }
         }
 
-        def kubernetes = [:]
-        def success = true
-        def lastException = null
-        kubernetes_versions.each { v ->
-          def version = v
-          kubernetes[version] = {
-            try {
-              echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests started"
-              // sh script: "make -j8 kind/test K8S_VERSION=${version}", label: "Running tests on kind ${version.replaceFirst(/@.*$/,"")} cluster"
-              sh script: "echo make -j8 kind/test K8S_VERSION=${version} && sleep 30", label: "Running tests on kind ${version.replaceFirst(/@.*$/,"")} cluster"
-              echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests succeeded"
-            } catch (e) {
-              success = false
-              echo "kubernetes ${version.replaceFirst(/@.*$/,"")} tests failed"
-            }
-          }
-        }
-
-        stage ("kubernetes ${version} tests") {
+        stage ("kubernetes tests") {
           parallel kubernetes
         }
 
