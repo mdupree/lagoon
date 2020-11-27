@@ -102,7 +102,7 @@ node {
           parallel kubernetes
         }
 
-        if success {
+        if (success) {
           currentBuild.result = 'SUCCESS'
         } else {
           currentBuild.result = 'FAILURE'
